@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import vudt.sdk.ads.data.models.Ad
 import vudt.sdk.ads.data.models.AdsType
+import vudt.sdk.ads.data.models.InterstitialWrapper
 import vudt.sdk.ads.exceptions.FailedToLoadAdException
 
 interface AdsRepository {
@@ -23,7 +24,7 @@ interface AdsRepository {
 
   fun isValid(id: String, type: AdsType): Boolean
 
-  fun loadInterstitial(context: Context, id: String): Flow<InterstitialAd>
+  fun loadInterstitial(context: Context, id: String): Flow<InterstitialWrapper>
 
   fun interstitialRepo(): Map<String, InterstitialAd>
 
@@ -59,14 +60,14 @@ class AdsRepositoryImpl : AdsRepository {
 
   override fun newAdRequest() = AdRequest.Builder().build()
 
-  override fun loadInterstitial(context: Context, id: String): Flow<InterstitialAd> {
+  override fun loadInterstitial(context: Context, id: String): Flow<InterstitialWrapper> {
     val adsFlow = callbackFlow {
       InterstitialAd.load(
         context, id, newAdRequest(), object : InterstitialAdLoadCallback() {
           override fun onAdLoaded(ad: InterstitialAd) {
             super.onAdLoaded(ad)
             interstitialMap[id] = ad
-            trySend(ad)
+            trySend(InterstitialWrapper(ad, null))
             Log.d("Ad", "OnAdLoaded")
           }
 
@@ -74,7 +75,7 @@ class AdsRepositoryImpl : AdsRepository {
             super.onAdFailedToLoad(p0)
             interstitialMap.remove(id)
             Log.d("Ad", "OnAdFailedToLoad: $p0")
-            throw FailedToLoadAdException(p0)
+            trySend(InterstitialWrapper(null, FailedToLoadAdException(p0)))
           }
         }
       )

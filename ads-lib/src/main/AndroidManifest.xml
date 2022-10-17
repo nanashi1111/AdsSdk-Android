@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="vudt.sdk.ads">
 
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application>
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"

@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.*
 import vudt.sdk.ads.AdsManager
 import vudt.sdk.ads.data.AdsRepository
 import vudt.sdk.ads.data.models.AdsType
+import vudt.sdk.ads.data.models.InterstitialWrapper
 import vudt.sdk.ads.data.models.State
 import vudt.sdk.ads.exceptions.InitAdsException
 import vudt.sdk.ads.exceptions.InvalidAdsIdException
@@ -16,11 +17,11 @@ import vudt.sdk.ads.exceptions.TimeoutException
 class LoadInterstitial constructor(
   private val context: Context,
   private val adsRepository: AdsRepository
-) : UseCase<InterstitialAd, LoadInterstitial.Params>() {
+) : UseCase<InterstitialWrapper, LoadInterstitial.Params>() {
 
-  class Params(val id: String, val retryCount: Int = 0, val timeDelayToRetry: Long, val timeout: Long)
+  class Params(val id: String, val retryCount: Int, val timeDelayToRetry: Long, val timeout: Long)
 
-  override fun buildFlow(param: Params): Flow<State<InterstitialAd>> {
+  override fun buildFlow(param: Params): Flow<State<InterstitialWrapper>> {
 
     if (!AdsManager.available()) {
       return flow {
@@ -34,15 +35,10 @@ class LoadInterstitial constructor(
       }
     }
 
-    if (adsRepository.interstitialRepo().get(param.id) != null) {
+    adsRepository.interstitialRepo()[param.id]?.let { ad ->
       return flow {
-        emit(State.DataState(adsRepository.interstitialRepo().get(param.id)!!))
-      }
-    }
-
-    adsRepository.interstitialRepo().get(param.id)?.let { ad ->
-      return flow {
-        emit(State.DataState(ad))
+        delay(500)
+        emit(State.DataState(InterstitialWrapper(ad, null)))
       }
     }
 
@@ -59,21 +55,27 @@ class LoadInterstitial constructor(
         Log.d("Ad", "TimeLoad Timeout = ${System.currentTimeMillis() - startTime}")
         throw TimeoutException()
       }
-      val ads = it as InterstitialAd
+      val ads = it as InterstitialWrapper
       flow {
         Log.d("Ad", "TimeLoad = ${System.currentTimeMillis() - startTime}")
-        emit(State.DataState(ads))
+        if (ads.interstitialAd != null) {
+          emit(State.DataState(ads))
+        } else {
+          throw ads.throwable!!
+          //emit(State.ErrorState(ads.throwable!!))
+        }
       }
     }.retryWhen { cause, attempt ->
-        val canRetry = cause !is TimeoutException && attempt < param.retryCount && System.currentTimeMillis() - startTime < param.timeDelayToRetry
-        if (canRetry) {
-          delay(param.timeDelayToRetry)
-          true
-        } else {
-          false
-        }
+      val canRetry = cause !is TimeoutException && attempt < param.retryCount && System.currentTimeMillis() - startTime < param.timeout
+      Log.d("canRetry", "cause: ${cause.message} ; canRetry = $canRetry ; attempt = $attempt ; ellapsedTime: ${(System.currentTimeMillis() - startTime)}")
+      if (canRetry) {
+        delay(param.timeDelayToRetry)
+        true
+      } else {
+        false
+      }
 
-      }.take(1)
+    }.take(1)
     return resultFlow
   }
 }
