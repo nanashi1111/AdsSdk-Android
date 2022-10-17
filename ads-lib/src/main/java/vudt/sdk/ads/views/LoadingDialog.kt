@@ -7,16 +7,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.DialogFragment
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import vudt.sdk.ads.R
 
-const val LOADING_TIME = 1000L
 
 class LoadingDialog: DialogFragment() {
-
-  var handler: LoadingDialogCompletionHandler? = null
 
   override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
     return inflater.inflate(R.layout.layout_loading, container, false)
@@ -25,20 +19,6 @@ class LoadingDialog: DialogFragment() {
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     super.onViewCreated(view, savedInstanceState)
     isCancelable = false
-    viewLifecycleOwner.lifecycleScope.launch {
-
-      when (requireArguments().getString(KEY_TYPE, TYPE_WAIT_SHOW_ADS)) {
-        TYPE_WAIT_SHOW_ADS -> {
-          delay(LOADING_TIME)
-          handler?.onComplete()
-          dismissAllowingStateLoss()
-        }
-        TYPE_WAIT_LOADING_ADS -> {
-
-        }
-      }
-
-    }
   }
 
   override fun onStart() {

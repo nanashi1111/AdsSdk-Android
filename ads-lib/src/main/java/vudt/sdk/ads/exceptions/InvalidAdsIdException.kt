@@ -1,4 +1,3 @@
 package vudt.sdk.ads.exceptions
 
-class InvalidAdsIdException(override val message: String): Exception(message) {
-}
+class InvalidAdsIdException: Exception("No Interstitial ids found. Check your AdsConfig.")

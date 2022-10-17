@@ -1,168 +1,89 @@
 package vudt.sdk.ads
 
-import android.app.Activity
 import android.content.Context
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.gms.ads.*
-import com.google.android.gms.ads.interstitial.InterstitialAd
-import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import vudt.sdk.ads.exceptions.InitAdsException
-import vudt.sdk.ads.utils.AdType
-import vudt.sdk.ads.utils.validateInterstitialAdsId
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collectLatest
+import vudt.sdk.ads.data.AdsRepository
+import vudt.sdk.ads.data.AdsRepositoryImpl
+import vudt.sdk.ads.data.models.AdsType
+import vudt.sdk.ads.data.models.State
+import vudt.sdk.ads.domain.DEFAULT_DELAY_RETRY
+import vudt.sdk.ads.domain.DEFAULT_TIMEOUT
+import vudt.sdk.ads.domain.LoadInterstitial
+import vudt.sdk.ads.domain.MarkAds
 import vudt.sdk.ads.views.LoadingDialog
-import vudt.sdk.ads.views.LoadingDialogCompletionHandler
 
-class AdsManager private constructor(val context: Context) {
+class AdsManager private constructor(context: Context) {
 
-  //Interstitial with id
-  val interstitialAdsMap = HashMap<String, InterstitialAd>()
+  //Repo
+  private val adsRepository: AdsRepository = AdsRepositoryImpl()
 
-  //Retry information
-  val interstitialRetryMap = HashMap<String, Int>()
-
+  //Usecases
+  private val loadInterstitialAdUseCase = LoadInterstitial(context, adsRepository)
+  private val markAdsUseCase = MarkAds(adsRepository)
 
   var config: AdsConfig? = null
-    private set(value) {
-      field = value
-    }
+    private set
 
-  val globalJob = Job()
+  var loadingDialog: LoadingDialog? = null
 
-  fun loadInterstitialThenShow(activity: AppCompatActivity, id: String = "", retryCount: Int = 0, delayTimeToRetry: Long = 500L, onFailed: (() -> Unit)? = null, onAdDismissed: (() -> Unit)?) {
-    validateInterstitialAdsId(id, AdType.INTERSTITIAL)
-    val adsId = if (id.isEmpty()) {
-      config!!.interstitialIds.first()
-    } else {
-      id
-    }
-    if (interstitialAdsMap[adsId] == null) {
-      val loadingDialog = LoadingDialog.getInstance(LoadingDialog.TYPE_WAIT_LOADING_ADS)
-      loadingDialog.show(activity.supportFragmentManager, loadingDialog.javaClass.canonicalName)
-      InterstitialAd.load(
-        context, adsId, provideAdsRequest(), object : InterstitialAdLoadCallback() {
-          override fun onAdLoaded(p0: InterstitialAd) {
-            super.onAdLoaded(p0)
-            interstitialAdsMap[adsId] = p0
-            interstitialRetryMap[adsId] = 0
-            p0.fullScreenContentCallback = object : FullScreenContentCallback() {
-              override fun onAdDismissedFullScreenContent() {
-                loadingDialog.dismissAllowingStateLoss()
-                onAdDismissed?.invoke()
-              }
-            }
-            p0.show(activity)
+  @DelicateCoroutinesApi
+  fun loadInterstitialThenShow(coroutineScope: CoroutineScope = GlobalScope, context: AppCompatActivity, id: String,
+                               maxRetry: Int = 0,
+                               delayPerRetry: Long = DEFAULT_DELAY_RETRY,
+                               timeout: Long = DEFAULT_TIMEOUT,
+                               onFailed: ((Throwable) -> Unit)? = null,
+                               onClosed: (() -> Unit)? = null) {
+    coroutineScope.launch {
+      loadInterstitialAdUseCase.invoke(LoadInterstitial.Params(id, retryCount = maxRetry, timeDelayToRetry = delayPerRetry, timeout = timeout)).collectLatest {
+        when (it) {
+          is State.LoadingState -> {
+            invalidateDialogThenShow(context)
           }
-
-          override fun onAdFailedToLoad(p0: LoadAdError) {
-            super.onAdFailedToLoad(p0)
-            interstitialAdsMap.remove(adsId)
-
-            if (retryCount > 0) {
-              val retriedCount = interstitialRetryMap[adsId] ?: 0
-              if (retryCount > retriedCount) {
-                GlobalScope.launch(globalJob) {
-                  delay(delayTimeToRetry)
-                  interstitialRetryMap[adsId] = 1 + retriedCount
-                  loadInterstitialAds(id, retryCount, delayTimeToRetry)
+          is State.DataState -> {
+            dismissLoadingDialog()
+            val ads = it.data
+            onClosed?.let {
+              ads.fullScreenContentCallback = object : FullScreenContentCallback() {
+                override fun onAdDismissedFullScreenContent() {
+                  super.onAdDismissedFullScreenContent()
+                  coroutineScope.launch { markAdsUseCase.invoke(MarkAds.Params(id, null)).collectLatest {  } }
+                  onClosed.invoke()
                 }
-              } else {
-                loadingDialog.dismissAllowingStateLoss()
-                onFailed?.invoke()
               }
-            } else {
-              loadingDialog.dismissAllowingStateLoss()
-              onFailed?.invoke()
-            }
-          }
-        }
-      )
-    } else {
-      val loadingDialog = LoadingDialog.getInstance(LoadingDialog.TYPE_WAIT_SHOW_ADS)
-      loadingDialog.handler = object :LoadingDialogCompletionHandler{
-        override fun onComplete() {
-          showInterstitialAds(activity, id, onAdDismissed)
-        }
-      }
-      loadingDialog.show(activity.supportFragmentManager, loadingDialog.javaClass.canonicalName)
-    }
-  }
-
-  fun showInterstitialAds(activity: AppCompatActivity, id: String = "", onAdDismissed: (() -> Unit)? = null) {
-    validateInterstitialAdsId(id, AdType.INTERSTITIAL)
-    val adsId = if (id.isEmpty()) {
-      config!!.interstitialIds.first()
-    } else {
-      id
-    }
-
-    interstitialAdsMap[adsId]?.let { ads ->
-      val loadingDialog = LoadingDialog().apply {
-        handler = object : LoadingDialogCompletionHandler {
-          override fun onComplete() {
-            ads.fullScreenContentCallback = object : FullScreenContentCallback() {
-              override fun onAdDismissedFullScreenContent() {
-                interstitialAdsMap.remove(adsId)
-                onAdDismissed?.invoke()
-              }
-            }
-            ads.show(activity)
-          }
-        }
-      }
-
-      loadingDialog.show(activity.supportFragmentManager, loadingDialog.javaClass.canonicalName)
-    }
-  }
-
-  fun loadInterstitialAds(id: String = "", retryCount: Int = 1, delayTimeToRetry: Long = 500L) {
-    config?.let {
-      validateInterstitialAdsId(id, AdType.INTERSTITIAL)
-      val adsId = if (id.isEmpty()) {
-        it.interstitialIds.first()
-      } else {
-        id
-      }
-      InterstitialAd.load(
-        context, adsId, provideAdsRequest(), object : InterstitialAdLoadCallback() {
-          override fun onAdLoaded(p0: InterstitialAd) {
-            super.onAdLoaded(p0)
-            interstitialAdsMap[adsId] = p0
-            interstitialRetryMap[adsId] = 0
-          }
-
-          override fun onAdFailedToLoad(p0: LoadAdError) {
-            super.onAdFailedToLoad(p0)
-            interstitialAdsMap.remove(adsId)
-
-            if (retryCount > 0) {
-              val retriedCount = interstitialRetryMap[adsId] ?: 0
-              if (retryCount > retriedCount) {
-                GlobalScope.launch(globalJob) {
-                  delay(delayTimeToRetry)
-                  interstitialRetryMap[adsId] = 1 + retriedCount
-                  loadInterstitialAds(id, retryCount, delayTimeToRetry)
+            } ?: run {
+              ads.fullScreenContentCallback = object : FullScreenContentCallback() {
+                override fun onAdDismissedFullScreenContent() {
+                  super.onAdDismissedFullScreenContent()
+                  coroutineScope.launch { markAdsUseCase.invoke(MarkAds.Params(id, null)).collectLatest {  } }
                 }
               }
             }
+            ads.show(context)
+          }
+          is State.ErrorState -> {
+            dismissLoadingDialog()
+            it.exception.printStackTrace()
+            onFailed?.invoke(it.exception)
           }
         }
-      )
-    } ?: run {
-      throw InitAdsException()
+      }
     }
-
-    fun destroy() {
-      globalJob.cancel()
-      AdsManager.INSTANCE = null
-    }
-
   }
 
-  private fun provideAdsRequest(): AdRequest = AdRequest.Builder().build()
+  private fun invalidateDialogThenShow(context: AppCompatActivity) {
+    loadingDialog?.dismissAllowingStateLoss()
+    loadingDialog = null
+    loadingDialog = LoadingDialog()
+    loadingDialog?.show(context.supportFragmentManager, "${loadingDialog?.javaClass?.canonicalName}")
+  }
+
+  private fun dismissLoadingDialog() {
+    loadingDialog?.dismissAllowingStateLoss()
+    loadingDialog = null
+  }
 
   companion object {
 
@@ -170,14 +91,13 @@ class AdsManager private constructor(val context: Context) {
 
     fun init(context: Context, adsConfig: AdsConfig) {
       MobileAds.initialize(context) {
-
         INSTANCE = AdsManager(context).apply {
           config = adsConfig
-        }
-        //Set Test device
-        getInstance()?.config?.testDevices?.let { testDevices ->
-          val config = RequestConfiguration.Builder().setTestDeviceIds(testDevices).build()
-          MobileAds.setRequestConfiguration(config)
+          adsRepository.setAdIds(AdsType.INTERSTITIAL, adsConfig.interstitialIds)
+          adsConfig.testDevices.let { testDevices ->
+            val config = RequestConfiguration.Builder().setTestDeviceIds(testDevices).build()
+            MobileAds.setRequestConfiguration(config)
+          }
         }
       }
     }
